@@ -1,22 +1,28 @@
 use nom::branch::alt;
 use std::fs;
 
-use nom::bytes::complete::{tag, tag_no_case, take};
+use nom::bytes::complete::{tag, tag_no_case};
 use nom::character::complete::{digit1, space1};
-use nom::combinator::{map, map_res, opt, value};
+use nom::combinator::{map_res, opt};
 use nom::multi::many1;
 use nom::sequence::{delimited, terminated};
-use nom::{IResult, Parser};
-
-const RED_CUBES: Color = Color::Red(12);
-const GREEN_CUBES: Color = Color::Green(13);
-const BLUE_CUBES: Color = Color::Blue(14);
+use nom::IResult;
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum Color {
     Blue(i32),
     Red(i32),
     Green(i32),
+}
+
+impl Color {
+    fn to_inner(self) -> i32 {
+        match self {
+            Color::Blue(n) => n,
+            Color::Green(n) => n,
+            Color::Red(n) => n,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -76,44 +82,53 @@ enum GameResult {
     Impossible(i32),
 }
 
-fn is_possible(game: &LineData) -> GameResult {
+fn calculate_min_required(game: &LineData) -> Vec<Color> {
+    let mut min_required_blue = 0;
+    let mut min_required_green = 0;
+    let mut min_required_red = 0;
     for set in &game.sets {
         for color in &set.colors {
             match color {
-                Color::Blue(_) => {
-                    if color > &BLUE_CUBES {
-                        return GameResult::Impossible(game.game_number);
+                Color::Blue(n) => {
+                    if n > &min_required_blue {
+                        min_required_blue = *n;
                     }
                 }
-                Color::Green(_) => {
-                    if color > &GREEN_CUBES {
-                        return GameResult::Impossible(game.game_number);
+                Color::Green(n) => {
+                    if n > &min_required_green {
+                        min_required_green = *n;
                     }
                 }
-                Color::Red(_) => {
-                    if color > &RED_CUBES {
-                        return GameResult::Impossible(game.game_number);
+                Color::Red(n) => {
+                    if n > &min_required_red {
+                        min_required_red = *n;
                     }
                 }
             }
         }
     }
-    GameResult::Possible(game.game_number)
+    vec![
+        Color::Blue(min_required_blue),
+        Color::Green(min_required_green),
+        Color::Red(min_required_red),
+    ]
 }
 
 fn main() {
     let input = fs::read_to_string("input.txt").expect("Something went wrong reading the file");
-    let mut sum_id = 0;
+    let mut sum_power_of_sets = 0;
     for line in input.lines() {
         println!("{}", line);
         let game = decode_line(line);
         println!("{:?}", game);
-        let result = is_possible(&game);
+        let result = calculate_min_required(&game);
         println!("{:?}", result);
-        match result {
-            GameResult::Possible(id) => sum_id += id,
-            GameResult::Impossible(_) => {}
-        }
+        let power_of_sets = result
+            .into_iter()
+            .map(|color| color.to_inner())
+            .product::<i32>();
+        println!("Power of sets: {}", power_of_sets);
+        sum_power_of_sets += power_of_sets;
     }
-    println!("Sum of possible games: {}", sum_id);
+    println!("Sum of power of sets: {}", sum_power_of_sets);
 }
