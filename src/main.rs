@@ -1,134 +1,96 @@
-use nom::branch::alt;
 use std::fs;
 
-use nom::bytes::complete::{tag, tag_no_case};
-use nom::character::complete::{digit1, space1};
-use nom::combinator::{map_res, opt};
-use nom::multi::many1;
-use nom::sequence::{delimited, terminated};
-use nom::IResult;
-
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
-enum Color {
-    Blue(i32),
-    Red(i32),
-    Green(i32),
+#[derive(Debug, Clone)]
+struct DigitCoords {
+    x: usize,
+    y: usize,
+    value: char,
 }
 
-impl Color {
-    fn to_inner(self) -> i32 {
-        match self {
-            Color::Blue(n) => n,
-            Color::Green(n) => n,
-            Color::Red(n) => n,
+#[derive(Debug, Clone)]
+struct NumCoords {
+    coords: Vec<DigitCoords>,
+    value: u32,
+}
+
+fn get_num_coords(input: &[Vec<char>]) -> Vec<NumCoords> {
+    fn push(num_coords: &mut Vec<NumCoords>, digit_coords: &mut Vec<DigitCoords>) {
+        num_coords.push(NumCoords {
+            coords: digit_coords.clone(),
+            value: digit_coords
+                .iter()
+                .map(|digit| digit.value.to_digit(10).unwrap())
+                .fold(0, |acc, digit| acc * 10 + digit),
+        });
+        digit_coords.clear();
+    }
+
+    let mut num_coords = Vec::new();
+    for (x, row) in input.iter().enumerate() {
+        let mut digit_coords = Vec::new();
+        for (y, item) in row.iter().enumerate() {
+            if item.is_ascii_digit() {
+                digit_coords.push(DigitCoords { x, y, value: *item });
+                if y == row.len() - 1 {
+                    push(&mut num_coords, &mut digit_coords);
+                }
+            } else if !digit_coords.is_empty() {
+                push(&mut num_coords, &mut digit_coords);
+            }
         }
     }
+    num_coords
 }
 
-#[derive(Debug)]
-struct GameInfo {
-    colors: Vec<Color>,
-}
-
-#[derive(Debug)]
-struct LineData {
-    game_number: i32,
-    sets: Vec<GameInfo>,
-}
-
-fn get_game_number(input: &str) -> IResult<&str, i32> {
-    delimited(
-        tag_no_case("game "),
-        map_res(digit1, |s: &str| s.parse::<i32>()),
-        tag_no_case(":"),
-    )(input)
-}
-
-// 3 blue
-fn parse_color(input: &str) -> IResult<&str, Color> {
-    alt((
-        map_res(terminated(digit1, tag_no_case(" blue")), |s: &str| {
-            s.parse::<i32>().map(|n| Color::Blue(n))
-        }),
-        map_res(terminated(digit1, tag_no_case(" green")), |s: &str| {
-            s.parse::<i32>().map(|n| Color::Green(n))
-        }),
-        map_res(terminated(digit1, tag_no_case(" red")), |s: &str| {
-            s.parse::<i32>().map(|n| Color::Red(n))
-        }),
-    ))(input)
-}
-
-fn parse_sets(input: &str) -> Vec<GameInfo> {
-    let sets = input.split(';');
-    sets.map(|set| {
-        many1(delimited(space1, parse_color, opt(tag(","))))(set)
-            .expect("Failed To parse colors")
-            .1
-    })
-    .map(|colors| GameInfo { colors })
-    .collect::<Vec<_>>()
-}
-
-fn decode_line(line: &str) -> LineData {
-    let (rest, game_number) = get_game_number(line).expect("Failed to parse game number");
-    let sets = parse_sets(rest);
-    LineData { game_number, sets }
-}
-
-#[derive(Debug)]
-enum GameResult {
-    Possible(i32),
-    Impossible(i32),
-}
-
-fn calculate_min_required(game: &LineData) -> Vec<Color> {
-    let mut min_required_blue = 0;
-    let mut min_required_green = 0;
-    let mut min_required_red = 0;
-    for set in &game.sets {
-        for color in &set.colors {
-            match color {
-                Color::Blue(n) => {
-                    if n > &min_required_blue {
-                        min_required_blue = *n;
-                    }
-                }
-                Color::Green(n) => {
-                    if n > &min_required_green {
-                        min_required_green = *n;
-                    }
-                }
-                Color::Red(n) => {
-                    if n > &min_required_red {
-                        min_required_red = *n;
-                    }
+fn seach_around(input: &[Vec<char>], digit: &DigitCoords) -> bool {
+    // (x-1,y-1) (x, y-1) (x+1,y-1)
+    // (x-1, y)   (x,y)    (x+1,y)
+    // (x-1,y+1) (x, y+1) (x+1,y+1)
+    let coords = [
+        (digit.x.checked_sub(1), digit.y.checked_sub(1)),
+        (Some(digit.x), digit.y.checked_sub(1)),
+        (digit.x.checked_add(1), digit.y.checked_sub(1)),
+        (digit.x.checked_sub(1), Some(digit.y)),
+        (digit.x.checked_add(1), Some(digit.y)),
+        (digit.x.checked_sub(1), digit.y.checked_add(1)),
+        (Some(digit.x), digit.y.checked_add(1)),
+        (digit.x.checked_add(1), digit.y.checked_add(1)),
+    ];
+    for (x, y) in coords {
+        if let (Some(x), Some(y)) = (x, y) {
+            if let Some(char) = input.get(x).and_then(|row| row.get(y)) {
+                // No queremos ni numeros ni puntos
+                if !char.is_ascii_digit() && char != &'.' {
+                    return true;
                 }
             }
         }
     }
-    vec![
-        Color::Blue(min_required_blue),
-        Color::Green(min_required_green),
-        Color::Red(min_required_red),
-    ]
+    false
 }
 
+fn get_valid_digits(input: &[Vec<char>], numbers: Vec<NumCoords>) -> Vec<u32> {
+    let mut valid_digits = Vec::new();
+    'number: for number in numbers {
+        for digit in number.coords {
+            if seach_around(input, &digit) {
+                valid_digits.push(number.value);
+                continue 'number;
+            }
+        }
+    }
+    valid_digits
+}
 fn main() {
     let input = fs::read_to_string("input.txt").expect("Something went wrong reading the file");
-    let mut sum_power_of_sets = 0;
-    for line in input.lines() {
-        println!("{}", line);
-        let game = decode_line(line);
-        println!("{:?}", game);
-        let result = calculate_min_required(&game);
-        println!("{:?}", result);
-        let power_of_sets = result
-            .into_iter()
-            .map(|color| color.to_inner())
-            .product::<i32>();
-        println!("Power of sets: {}", power_of_sets);
-        sum_power_of_sets += power_of_sets;
-    }
-    println!("Sum of power of sets: {}", sum_power_of_sets);
+    let matrix = input
+        .lines()
+        .map(|line| line.chars().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let coords = get_num_coords(&matrix);
+    println!("Coords: {:?}", coords);
+    println!("Coords len: {}", coords.len());
+    let valid_numbers = get_valid_digits(&matrix, coords);
+    println!("Valid numbers: {:?}", valid_numbers);
+    println!("Sum: {}", valid_numbers.iter().sum::<u32>());
 }
