@@ -1,200 +1,285 @@
+use nom::bytes::complete::{tag, tag_no_case, take_until, take_while};
+use nom::combinator::{map, map_res, opt};
+use nom::multi::{many0, many1};
+use nom::sequence::{delimited, terminated};
+use nom::IResult;
 use std::fs;
-use std::sync::atomic::{AtomicU32, Ordering};
 
-static ID: AtomicU32 = AtomicU32::new(0);
-
-trait Coord {
-    fn x(&self) -> usize;
-    fn y(&self) -> usize;
+#[derive(Debug, PartialEq)]
+struct Card {
+    id: u8,
+    wining_numbers: Vec<u8>,
+    selected_numbers: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct DigitCoords {
-    x: usize,
-    y: usize,
-    value: char,
+fn parse_number(input: &str) -> IResult<&str, u8> {
+    map_res(
+        delimited(
+            opt(tag(" ")),
+            take_while(|c: char| c.is_ascii_digit()),
+            opt(tag(" ")),
+        ),
+        |s: &str| s.parse::<u8>(),
+    )(input)
 }
 
-impl Coord for DigitCoords {
-    fn x(&self) -> usize {
-        self.x
-    }
-
-    fn y(&self) -> usize {
-        self.y
-    }
+//  41 48 83 86 17
+fn decode_list_numbers(input: &str) -> IResult<&str, Vec<u8>> {
+    let (_, values) = many1(parse_number)(input)?;
+    Ok(("", values))
 }
 
-#[derive(Debug, Clone)]
-struct NumCoords {
-    coords: Vec<DigitCoords>,
-    value: u32,
-    id: u32,
+fn extract_card_id(input: &str) -> IResult<&str, u8> {
+    let (rest, card_number) = map_res(
+        delimited(
+            terminated(tag_no_case("Card "), many0(tag(" "))),
+            take_until(":"),
+            tag(":"),
+        ),
+        |s: &str| s.parse::<u8>(),
+    )(input)?;
+    Ok((rest, card_number))
+}
+fn extract_wining_values(rest: &str) -> IResult<&str, &str> {
+    map(
+        delimited(tag(" "), take_until("|"), tag("|")),
+        |res: &str| res.trim(),
+    )(rest)
 }
 
-fn get_num_coords(input: &[Vec<char>]) -> Vec<NumCoords> {
-    fn push(num_coords: &mut Vec<NumCoords>, digit_coords: &mut Vec<DigitCoords>) {
-        num_coords.push(NumCoords {
-            coords: digit_coords.clone(),
-            value: digit_coords
-                .iter()
-                .map(|digit| digit.value.to_digit(10).unwrap())
-                .fold(0, |acc, digit| acc * 10 + digit),
-            id: ID.fetch_add(1, Ordering::Relaxed),
-        });
-        digit_coords.clear();
-    }
+fn extract_selected_values(rest: &str) -> IResult<&str, &str> {
+    Ok(("", rest.trim()))
+}
 
-    let mut num_coords = Vec::new();
-    for (x, row) in input.iter().enumerate() {
-        let mut digit_coords = Vec::new();
-        for (y, item) in row.iter().enumerate() {
-            if item.is_ascii_digit() {
-                digit_coords.push(DigitCoords { x, y, value: *item });
-                if y == row.len() - 1 {
-                    push(&mut num_coords, &mut digit_coords);
-                }
-            } else if !digit_coords.is_empty() {
-                push(&mut num_coords, &mut digit_coords);
+// Card 1: 41 48 83 86 17 | 83 86  6 31 17  9 48 53
+fn decode_card(input: &str) -> IResult<&str, Card> {
+    let (rest, card_number) = extract_card_id(input)?;
+    let (rest, wining_values) = extract_wining_values(rest)?;
+    let (_, selected_values) = extract_selected_values(rest)?;
+    let (_, wining_numbers) = decode_list_numbers(wining_values)?;
+    let (_, selected_numbers) = decode_list_numbers(selected_values)?;
+    let card = Card {
+        id: card_number,
+        wining_numbers,
+        selected_numbers,
+    };
+
+    Ok(("", card))
+}
+
+fn decode_cards(input: &str) -> Vec<Card> {
+    input
+        .lines()
+        .map(|line| {
+            let (_, card) = decode_card(line).unwrap();
+            card
+        })
+        .collect()
+}
+
+fn calculate_card_puntuation(card: &Card) -> u32 {
+    card.selected_numbers.iter().fold(0, |acc, number| {
+        if card.wining_numbers.contains(number) {
+            if acc == 0 {
+                acc + 1
+            } else {
+                acc << 1
             }
+        } else {
+            acc
         }
-    }
-    num_coords
-}
-
-fn seach_around(input: &[Vec<char>], digit: &DigitCoords) -> bool {
-    // (x-1,y-1) (x, y-1) (x+1,y-1)
-    // (x-1, y)   (x,y)    (x+1,y)
-    // (x-1,y+1) (x, y+1) (x+1,y+1)
-    let coords = generate_search_field(digit);
-    for (x, y) in coords {
-        if let (Some(x), Some(y)) = (x, y) {
-            if let Some(char) = input.get(x).and_then(|row| row.get(y)) {
-                // No queremos ni numeros ni puntos
-                if !char.is_ascii_digit() && char != &'.' {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-fn generate_search_field<T>(digit: &T) -> [(Option<usize>, Option<usize>); 8]
-where
-    T: Coord,
-{
-    [
-        (digit.x().checked_sub(1), digit.y().checked_sub(1)),
-        (Some(digit.x()), digit.y().checked_sub(1)),
-        (digit.x().checked_add(1), digit.y().checked_sub(1)),
-        (digit.x().checked_sub(1), Some(digit.y())),
-        (digit.x().checked_add(1), Some(digit.y())),
-        (digit.x().checked_sub(1), digit.y().checked_add(1)),
-        (Some(digit.x()), digit.y().checked_add(1)),
-        (digit.x().checked_add(1), digit.y().checked_add(1)),
-    ]
-}
-
-fn get_valid_digits(input: &[Vec<char>], numbers: Vec<NumCoords>) -> Vec<NumCoords> {
-    let mut valid_digits = Vec::new();
-    'number: for number in numbers {
-        for digit in &number.coords {
-            if seach_around(input, digit) {
-                valid_digits.push(number);
-                continue 'number;
-            }
-        }
-    }
-    valid_digits
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Gears {
-    x: usize,
-    y: usize,
-}
-
-impl Coord for Gears {
-    fn x(&self) -> usize {
-        self.x
-    }
-
-    fn y(&self) -> usize {
-        self.y
-    }
-}
-
-fn get_gears(input: &[Vec<char>]) -> Vec<Gears> {
-    let mut gears = Vec::new();
-    for (x, row) in input.iter().enumerate() {
-        for (y, item) in row.iter().enumerate() {
-            if item == &'*' {
-                gears.push(Gears { x, y });
-            }
-        }
-    }
-    println!("Gears: {:?}", gears);
-    gears
-}
-
-fn get_ratios(gears: &[Gears], valid_numbers: &[NumCoords]) -> Vec<u32> {
-    let mut ratios = Vec::new();
-    for gear in gears {
-        let search_field = generate_search_field(gear);
-        let mut numbers = vec![];
-        for (x, y) in search_field {
-            if let (Some(x), Some(y)) = (x, y) {
-                let res: Vec<_> = valid_numbers
-                    .iter()
-                    .filter_map(|num| {
-                        num.coords
-                            .iter()
-                            .find(|coord| coord.x == x && coord.y == y)
-                            .map(|_| num)
-                    })
-                    .cloned()
-                    .collect();
-                if res.len() == 1 {
-                    let first = res.first().unwrap();
-                    if numbers.iter().any(|n: &NumCoords| n.id == first.id) {
-                        continue;
-                    }
-                    numbers.push(first.clone());
-                    continue;
-                }
-            }
-        }
-
-        if numbers.len() == 2 {
-            let ratio = numbers[0].value * numbers[1].value;
-            ratios.push(ratio);
-            println!(
-                "Numbers: {:?}",
-                numbers.iter().map(|n| n.value).collect::<Vec<_>>()
-            );
-            println!("Ratio: {:?}", ratio);
-        }
-    }
-    ratios
+    })
 }
 
 fn main() {
     let input = fs::read_to_string("input.txt").expect("Something went wrong reading the file");
-    let matrix = input
-        .lines()
-        .map(|line| line.chars().collect::<Vec<_>>())
-        .collect::<Vec<_>>();
-    let coords = get_num_coords(&matrix);
-    //println!("Coords: {:?}", coords);
-    println!("Coords len: {}", coords.len());
-    let valid_numbers = get_valid_digits(&matrix, coords);
-    let gears = get_gears(&matrix);
-    let ratios = get_ratios(&gears, &valid_numbers);
-    //println!("Valid numbers: {:?}", valid_numbers);
-    println!(
-        "Sum: {}",
-        valid_numbers.iter().map(|g| g.value).sum::<u32>()
-    );
-    println!("Sum ratios {}", ratios.iter().sum::<u32>());
+    let cards = decode_cards(&input);
+    let puntuation = cards.iter().map(calculate_card_puntuation).sum::<u32>();
+    println!("puntuation: {}", puntuation);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_card_id() {
+        let test_input = "Card   1: 69 61 27 58 89 52 81 94 40 51 | 43 40 52 90 37 97 89 80 69 42 51 70 94 58 10 73 21 29 61 63 57 79 81 27 35";
+        let expected_output= Ok((" 69 61 27 58 89 52 81 94 40 51 | 43 40 52 90 37 97 89 80 69 42 51 70 94 58 10 73 21 29 61 63 57 79 81 27 35", 1));
+        assert_eq!(extract_card_id(test_input), expected_output);
+
+        let test_input = "Card 1: 41 48 83 86 17 | 83 86  6 31 17  9 48 53";
+        let expected_output = Ok((" 41 48 83 86 17 | 83 86  6 31 17  9 48 53", 1));
+        assert_eq!(extract_card_id(test_input), expected_output);
+
+        let test_input = "Card 208:  9 67 74 14 59 41 84 60 73 86 | 87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21";
+        let expected_output = Ok(("  9 67 74 14 59 41 84 60 73 86 | 87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21", 208));
+        assert_eq!(extract_card_id(test_input), expected_output);
+
+        let test_input = "Card 213: 79 84 12 86 58 10 11 24 32 26 | 52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95";
+        let expected_output = Ok((" 79 84 12 86 58 10 11 24 32 26 | 52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95", 213));
+        assert_eq!(extract_card_id(test_input), expected_output);
+    }
+
+    #[test]
+    fn test_extract_wining_values() {
+        let test_input = " 41 48 83 86 17 | 83 86  6 31 17  9 48 53";
+        let expected_output = Ok((" 83 86  6 31 17  9 48 53", "41 48 83 86 17"));
+        assert_eq!(extract_wining_values(test_input), expected_output);
+
+        let test_input = "  9 67 74 14 59 41 84 60 73 86 | 87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21";
+        let expected_output = Ok((
+            " 87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21",
+            "9 67 74 14 59 41 84 60 73 86",
+        ));
+        assert_eq!(extract_wining_values(test_input), expected_output);
+
+        let test_input = " 79 84 12 86 58 10 11 24 32 26 | 52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95";
+        let expected_output = Ok((
+            " 52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95",
+            "79 84 12 86 58 10 11 24 32 26",
+        ));
+        assert_eq!(extract_wining_values(test_input), expected_output);
+    }
+
+    #[test]
+    fn test_extract_selected_values() {
+        let test_input = " 83 86  6 31 17  9 48 53";
+        let expected_output = Ok(("", "83 86  6 31 17  9 48 53"));
+        assert_eq!(extract_selected_values(test_input), expected_output);
+
+        let test_input =
+            " 87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21";
+        let expected_output = Ok((
+            "",
+            "87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21",
+        ));
+        assert_eq!(extract_selected_values(test_input), expected_output);
+
+        let test_input =
+            " 52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95";
+        let expected_output = Ok((
+            "",
+            "52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95",
+        ));
+        assert_eq!(extract_selected_values(test_input), expected_output);
+    }
+
+    #[test]
+    fn test_decode_list_numbers() {
+        let test_input = "41 48 83 86 17";
+        let expected_output = Ok(("", vec![41, 48, 83, 86, 17]));
+        assert_eq!(decode_list_numbers(test_input), expected_output);
+
+        let test_input = "83 86  6 31 17  9 48 53";
+        let expected_output = Ok(("", vec![83, 86, 6, 31, 17, 9, 48, 53]));
+        assert_eq!(decode_list_numbers(test_input), expected_output);
+
+        let test_input = "9 67 74 14 59 41 84 60 73 86";
+        let expected_output = Ok(("", vec![9, 67, 74, 14, 59, 41, 84, 60, 73, 86]));
+        assert_eq!(decode_list_numbers(test_input), expected_output);
+
+        let test_input = "79 84 12 86 58 10 11 24 32 26";
+        let expected_output = Ok(("", vec![79, 84, 12, 86, 58, 10, 11, 24, 32, 26]));
+        assert_eq!(decode_list_numbers(test_input), expected_output);
+
+        let test_input = "83 86  6 31 17  9 48 53";
+        let expected_output = Ok(("", vec![83, 86, 6, 31, 17, 9, 48, 53]));
+        assert_eq!(decode_list_numbers(test_input), expected_output);
+
+        let test_input =
+            "87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21";
+        let expected_output = Ok((
+            "",
+            vec![
+                87, 16, 27, 86, 50, 7, 30, 77, 64, 76, 73, 71, 99, 92, 23, 82, 2, 5, 55, 57, 40,
+                47, 45, 72, 21,
+            ],
+        ));
+        assert_eq!(decode_list_numbers(test_input), expected_output);
+
+        let test_input =
+            "52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95";
+        let expected_output = Ok((
+            "",
+            vec![
+                52, 94, 65, 29, 89, 7, 76, 80, 31, 21, 78, 37, 66, 69, 13, 41, 93, 73, 96, 16, 92,
+                44, 62, 3, 95,
+            ],
+        ));
+        assert_eq!(decode_list_numbers(test_input), expected_output);
+    }
+    #[test]
+    fn test_decode_cards() {
+        let test_input = "\
+            Card 1: 41 48 83 86 17 | 83 86  6 31 17  9 48 53\n\
+            Card 2: 13 32 20 16 61 | 61 30 68 82 17 32 24 19\n\
+            Card 3:  1 21 53 59 44 | 69 82 63 72 16 21 14  1";
+
+        let expected_output = vec![
+            Card {
+                id: 1,
+                wining_numbers: vec![41, 48, 83, 86, 17],
+                selected_numbers: vec![83, 86, 6, 31, 17, 9, 48, 53],
+            },
+            Card {
+                id: 2,
+                wining_numbers: vec![13, 32, 20, 16, 61],
+                selected_numbers: vec![61, 30, 68, 82, 17, 32, 24, 19],
+            },
+            Card {
+                id: 3,
+                wining_numbers: vec![1, 21, 53, 59, 44],
+                selected_numbers: vec![69, 82, 63, 72, 16, 21, 14, 1],
+            },
+        ];
+
+        assert_eq!(decode_cards(test_input), expected_output);
+    }
+
+    #[test]
+    fn test_calculate_card_puntuation() {
+        // Card 1: 41 48 83 86 17 | 83 86  6 31 17  9 48 53
+        let card = Card {
+            id: 1,
+            wining_numbers: vec![41, 48, 83, 86, 17],
+            selected_numbers: vec![83, 86, 6, 31, 17, 9, 48, 53],
+        };
+        assert_eq!(calculate_card_puntuation(&card), 8);
+        // Card 2: 13 32 20 16 61 | 61 30 68 82 17 32 24 19
+        let card = Card {
+            id: 2,
+            wining_numbers: vec![13, 32, 20, 16, 61],
+            selected_numbers: vec![61, 30, 68, 82, 17, 32, 24, 19],
+        };
+        assert_eq!(calculate_card_puntuation(&card), 2);
+        // Card 3:  1 21 53 59 44 | 69 82 63 72 16 21 14  1
+        let card = Card {
+            id: 3,
+            wining_numbers: vec![1, 21, 53, 59, 44],
+            selected_numbers: vec![69, 82, 63, 72, 16, 21, 14, 1],
+        };
+        assert_eq!(calculate_card_puntuation(&card), 2);
+        // Card 4: 41 92 73 84 69 | 59 84 76 51 58  5 54 83
+        let card = Card {
+            id: 4,
+            wining_numbers: vec![41, 92, 73, 84, 69],
+            selected_numbers: vec![59, 84, 76, 51, 58, 5, 54, 83],
+        };
+        assert_eq!(calculate_card_puntuation(&card), 1);
+        //Card 5: 87 83 26 28 32 | 88 30 70 12 93 22 82 36
+        let card = Card {
+            id: 5,
+            wining_numbers: vec![87, 83, 26, 28, 32],
+            selected_numbers: vec![88, 30, 70, 12, 93, 22, 82, 36],
+        };
+        assert_eq!(calculate_card_puntuation(&card), 0);
+        // Card 6: 31 18 13 56 72 | 74 77 10 23 35 67 36 11
+        let card = Card {
+            id: 6,
+            wining_numbers: vec![31, 18, 13, 56, 72],
+            selected_numbers: vec![74, 77, 10, 23, 35, 67, 36, 11],
+        };
+        assert_eq!(calculate_card_puntuation(&card), 0);
+    }
 }
