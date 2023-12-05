@@ -5,9 +5,10 @@ use nom::sequence::{delimited, terminated};
 use nom::IResult;
 use std::fs;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct Card {
     id: u8,
+    amount: i32,
     wining_numbers: Vec<u8>,
     selected_numbers: Vec<u8>,
 }
@@ -60,6 +61,7 @@ fn decode_card(input: &str) -> IResult<&str, Card> {
     let (_, selected_numbers) = decode_list_numbers(selected_values)?;
     let card = Card {
         id: card_number,
+        amount: 1,
         wining_numbers,
         selected_numbers,
     };
@@ -77,7 +79,7 @@ fn decode_cards(input: &str) -> Vec<Card> {
         .collect()
 }
 
-fn calculate_card_puntuation(card: &Card) -> u32 {
+fn calculate_card_puntuation_initial(card: &Card) -> u32 {
     card.selected_numbers.iter().fold(0, |acc, number| {
         if card.wining_numbers.contains(number) {
             if acc == 0 {
@@ -91,11 +93,51 @@ fn calculate_card_puntuation(card: &Card) -> u32 {
     })
 }
 
+fn calculate_matches(card: &Card) -> u8 {
+    card.selected_numbers.iter().fold(0, |acc, number| {
+        if card.wining_numbers.contains(number) {
+            acc + 1
+        } else {
+            acc
+        }
+    })
+}
+
+fn calculate_additional_cards(cards: &Vec<Card>) -> Vec<Card> {
+    let mut cloned_cards = cards.clone();
+    for card in &cloned_cards.clone() {
+        add_matches_to_cards(card, &mut cloned_cards);
+    }
+    cloned_cards
+}
+
+fn add_matches_to_cards(card: &Card, cards: &mut [Card]) {
+    let number_of_matches = calculate_matches(card);
+    let curr_card = cards
+        .iter()
+        .find(|c| c.id == card.id)
+        .map(|c| c.amount)
+        .unwrap_or(1);
+    for i in 1_u8..=number_of_matches {
+        let new_id = card.id + i;
+        if let Some(matched_card) = cards.iter_mut().find(|c| c.id == new_id) {
+            matched_card.amount += curr_card;
+        }
+    }
+}
+
 fn main() {
     let input = fs::read_to_string("input.txt").expect("Something went wrong reading the file");
     let cards = decode_cards(&input);
-    let puntuation = cards.iter().map(calculate_card_puntuation).sum::<u32>();
+    let puntuation = cards
+        .iter()
+        .map(calculate_card_puntuation_initial)
+        .sum::<u32>();
     println!("puntuation: {}", puntuation);
+    let new_cards = calculate_additional_cards(&cards);
+    println!("new cards: {:?}", new_cards);
+    let total_cards = new_cards.into_iter().fold(0, |acc, card| acc + card.amount);
+    println!("total cards: {}", total_cards);
 }
 
 #[cfg(test)]
@@ -219,16 +261,19 @@ mod tests {
         let expected_output = vec![
             Card {
                 id: 1,
+                amount: 1,
                 wining_numbers: vec![41, 48, 83, 86, 17],
                 selected_numbers: vec![83, 86, 6, 31, 17, 9, 48, 53],
             },
             Card {
                 id: 2,
+                amount: 1,
                 wining_numbers: vec![13, 32, 20, 16, 61],
                 selected_numbers: vec![61, 30, 68, 82, 17, 32, 24, 19],
             },
             Card {
                 id: 3,
+                amount: 1,
                 wining_numbers: vec![1, 21, 53, 59, 44],
                 selected_numbers: vec![69, 82, 63, 72, 16, 21, 14, 1],
             },
@@ -242,44 +287,102 @@ mod tests {
         // Card 1: 41 48 83 86 17 | 83 86  6 31 17  9 48 53
         let card = Card {
             id: 1,
+            amount: 1,
             wining_numbers: vec![41, 48, 83, 86, 17],
             selected_numbers: vec![83, 86, 6, 31, 17, 9, 48, 53],
         };
-        assert_eq!(calculate_card_puntuation(&card), 8);
+        assert_eq!(calculate_card_puntuation_initial(&card), 8);
         // Card 2: 13 32 20 16 61 | 61 30 68 82 17 32 24 19
         let card = Card {
             id: 2,
+            amount: 1,
             wining_numbers: vec![13, 32, 20, 16, 61],
             selected_numbers: vec![61, 30, 68, 82, 17, 32, 24, 19],
         };
-        assert_eq!(calculate_card_puntuation(&card), 2);
+        assert_eq!(calculate_card_puntuation_initial(&card), 2);
         // Card 3:  1 21 53 59 44 | 69 82 63 72 16 21 14  1
         let card = Card {
             id: 3,
+            amount: 1,
             wining_numbers: vec![1, 21, 53, 59, 44],
             selected_numbers: vec![69, 82, 63, 72, 16, 21, 14, 1],
         };
-        assert_eq!(calculate_card_puntuation(&card), 2);
+        assert_eq!(calculate_card_puntuation_initial(&card), 2);
         // Card 4: 41 92 73 84 69 | 59 84 76 51 58  5 54 83
         let card = Card {
             id: 4,
+            amount: 1,
             wining_numbers: vec![41, 92, 73, 84, 69],
             selected_numbers: vec![59, 84, 76, 51, 58, 5, 54, 83],
         };
-        assert_eq!(calculate_card_puntuation(&card), 1);
+        assert_eq!(calculate_card_puntuation_initial(&card), 1);
         //Card 5: 87 83 26 28 32 | 88 30 70 12 93 22 82 36
         let card = Card {
             id: 5,
+            amount: 1,
             wining_numbers: vec![87, 83, 26, 28, 32],
             selected_numbers: vec![88, 30, 70, 12, 93, 22, 82, 36],
         };
-        assert_eq!(calculate_card_puntuation(&card), 0);
+        assert_eq!(calculate_card_puntuation_initial(&card), 0);
         // Card 6: 31 18 13 56 72 | 74 77 10 23 35 67 36 11
         let card = Card {
             id: 6,
+            amount: 1,
             wining_numbers: vec![31, 18, 13, 56, 72],
             selected_numbers: vec![74, 77, 10, 23, 35, 67, 36, 11],
         };
-        assert_eq!(calculate_card_puntuation(&card), 0);
+        assert_eq!(calculate_card_puntuation_initial(&card), 0);
+    }
+
+    #[test]
+    fn test_calculate_matches() {
+        // Card 1: 41 48 83 86 17 | 83 86  6 31 17  9 48 53
+        let card = Card {
+            id: 1,
+            amount: 1,
+            wining_numbers: vec![41, 48, 83, 86, 17],
+            selected_numbers: vec![83, 86, 6, 31, 17, 9, 48, 53],
+        };
+        assert_eq!(calculate_matches(&card), 4);
+        // Card 2: 13 32 20 16 61 | 61 30 68 82 17 32 24 19
+        let card = Card {
+            id: 2,
+            amount: 1,
+            wining_numbers: vec![13, 32, 20, 16, 61],
+            selected_numbers: vec![61, 30, 68, 82, 17, 32, 24, 19],
+        };
+        assert_eq!(calculate_matches(&card), 2);
+        // Card 3:  1 21 53 59 44 | 69 82 63 72 16 21 14  1
+        let card = Card {
+            id: 3,
+            amount: 1,
+            wining_numbers: vec![1, 21, 53, 59, 44],
+            selected_numbers: vec![69, 82, 63, 72, 16, 21, 14, 1],
+        };
+        assert_eq!(calculate_matches(&card), 2);
+        // Card 4: 41 92 73 84 69 | 59 84 76 51 58  5 54 83
+        let card = Card {
+            id: 4,
+            amount: 1,
+            wining_numbers: vec![41, 92, 73, 84, 69],
+            selected_numbers: vec![59, 84, 76, 51, 58, 5, 54, 83],
+        };
+        assert_eq!(calculate_matches(&card), 1);
+        //Card 5: 87 83 26 28 32 | 88 30 70 12 93 22 82 36
+        let card = Card {
+            id: 5,
+            amount: 1,
+            wining_numbers: vec![87, 83, 26, 28, 32],
+            selected_numbers: vec![88, 30, 70, 12, 93, 22, 82, 36],
+        };
+        assert_eq!(calculate_matches(&card), 0);
+        // Card 6: 31 18 13 56 72 | 74 77 10 23 35 67 36 11
+        let card = Card {
+            id: 6,
+            amount: 1,
+            wining_numbers: vec![31, 18, 13, 56, 72],
+            selected_numbers: vec![74, 77, 10, 23, 35, 67, 36, 11],
+        };
+        assert_eq!(calculate_matches(&card), 0);
     }
 }
