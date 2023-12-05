@@ -1,388 +1,267 @@
+mod macros;
+mod traits;
+
+use crate::traits::{Mappable, Mapper, NuType};
 use nom::bytes::complete::{tag, tag_no_case, take_until, take_while};
+use nom::character::complete::line_ending;
 use nom::combinator::{map, map_res, opt};
-use nom::multi::{many0, many1};
-use nom::sequence::{delimited, terminated};
+use nom::multi::many1;
+use nom::sequence::{preceded, terminated};
 use nom::IResult;
+use rayon::prelude::*;
 use std::fs;
 
-#[derive(Debug, PartialEq, Clone)]
-struct Card {
-    id: u8,
-    amount: i32,
-    wining_numbers: Vec<u8>,
-    selected_numbers: Vec<u8>,
-}
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+struct Seed(u64);
+impl_nu_type!(Seed);
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+struct Soil(u64);
+impl_nu_type!(Soil);
+generate_mapper!(SoilMapper, Soil, Seed);
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+struct Fertilizer(u64);
+impl_nu_type!(Fertilizer);
+generate_mapper!(FertilizerMapper, Fertilizer, Soil);
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+struct Water(u64);
+impl_nu_type!(Water);
+generate_mapper!(WaterMapper, Water, Fertilizer);
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+struct Light(u64);
+impl_nu_type!(Light);
+generate_mapper!(LightMapper, Light, Water);
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+struct Temperature(u64);
+impl_nu_type!(Temperature);
+generate_mapper!(TemperatureMapper, Temperature, Light);
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+struct Humidity(u64);
+impl_nu_type!(Humidity);
+generate_mapper!(HumidityMapper, Humidity, Temperature);
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+struct Location(u64);
+impl_nu_type!(Location);
+generate_mapper!(LocationMapper, Location, Humidity);
 
-fn parse_number(input: &str) -> IResult<&str, u8> {
-    map_res(
-        delimited(
-            opt(tag(" ")),
-            take_while(|c: char| c.is_ascii_digit()),
-            opt(tag(" ")),
-        ),
-        |s: &str| s.parse::<u8>(),
+fn parse_list_numbers(input: &str) -> IResult<&str, u64> {
+    terminated(
+        map_res(take_while(|c: char| c.is_ascii_digit()), |s: &str| {
+            s.parse::<u64>()
+        }),
+        opt(tag(" ")),
     )(input)
 }
 
-//  41 48 83 86 17
-fn decode_list_numbers(input: &str) -> IResult<&str, Vec<u8>> {
-    let (_, values) = many1(parse_number)(input)?;
-    Ok(("", values))
-}
-
-fn extract_card_id(input: &str) -> IResult<&str, u8> {
-    let (rest, card_number) = map_res(
-        delimited(
-            terminated(tag_no_case("Card "), many0(tag(" "))),
-            take_until(":"),
-            tag(":"),
-        ),
-        |s: &str| s.parse::<u8>(),
-    )(input)?;
-    Ok((rest, card_number))
-}
-fn extract_wining_values(rest: &str) -> IResult<&str, &str> {
+fn parse_seed(input: &str) -> IResult<&str, Vec<Seed>> {
     map(
-        delimited(tag(" "), take_until("|"), tag("|")),
-        |res: &str| res.trim(),
-    )(rest)
+        preceded(
+            preceded(tag_no_case("seeds:"), opt(tag(" "))),
+            many1(parse_list_numbers),
+        ),
+        |s| s.iter().map(|s| Seed::new(*s)).collect::<Vec<_>>(),
+    )(input)
 }
 
-fn extract_selected_values(rest: &str) -> IResult<&str, &str> {
-    Ok(("", rest.trim()))
+fn parse_maps<M: Mapper>(input: &str) -> IResult<&str, Vec<M>> {
+    many1(map(
+        terminated(many1(parse_list_numbers), opt(line_ending)),
+        |list| {
+            M::new(
+                *list.first().unwrap(),
+                *list.get(1).unwrap(),
+                *list.get(2).unwrap(),
+            )
+        },
+    ))(input)
 }
 
-// Card 1: 41 48 83 86 17 | 83 86  6 31 17  9 48 53
-fn decode_card(input: &str) -> IResult<&str, Card> {
-    let (rest, card_number) = extract_card_id(input)?;
-    let (rest, wining_values) = extract_wining_values(rest)?;
-    let (_, selected_values) = extract_selected_values(rest)?;
-    let (_, wining_numbers) = decode_list_numbers(wining_values)?;
-    let (_, selected_numbers) = decode_list_numbers(selected_values)?;
-    let card = Card {
-        id: card_number,
-        amount: 1,
-        wining_numbers,
-        selected_numbers,
-    };
-
-    Ok(("", card))
+fn general_map_parser<'a, T: Mapper>(input: &'a str, until: &str) -> IResult<&'a str, Vec<T>> {
+    let (advance_until_map, _) = take_until(until)(input)?;
+    let (rest, _) = preceded(tag(until), opt(line_ending))(advance_until_map)?;
+    parse_maps::<T>(rest)
 }
 
-fn decode_cards(input: &str) -> Vec<Card> {
+fn decode_input(input: &String) -> InputDecoded {
+    let (rest, seeds) = parse_seed(&input).unwrap();
+    let (rest, soil_mappers) = general_map_parser::<SoilMapper>(rest, "seed-to-soil map:").unwrap();
+    let (rest, fertilizer_mappers) =
+        general_map_parser::<FertilizerMapper>(rest, "soil-to-fertilizer map:").unwrap();
+    let (rest, water_mappers) =
+        general_map_parser::<WaterMapper>(rest, "fertilizer-to-water map:").unwrap();
+    let (rest, light_mappers) =
+        general_map_parser::<LightMapper>(rest, "water-to-light map:").unwrap();
+    let (rest, temperature_mappers) =
+        general_map_parser::<TemperatureMapper>(rest, "light-to-temperature map:").unwrap();
+    let (rest, humidity_mappers) =
+        general_map_parser::<HumidityMapper>(rest, "temperature-to-humidity map:").unwrap();
+    let (_, location_mappers) =
+        general_map_parser::<LocationMapper>(rest, "humidity-to-location map:").unwrap();
+    let seeds_pairs = seeds
+        .clone()
+        .chunks_exact(2)
+        .map(|chunk| (chunk[0], chunk[1]))
+        .collect::<Vec<_>>();
+    InputDecoded {
+        soil_mappers,
+        fertilizer_mappers,
+        water_mappers,
+        light_mappers,
+        temperature_mappers,
+        humidity_mappers,
+        location_mappers,
+        seeds,
+        seeds_pairs,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DecodedInfomationFase1 {
+    seed: Seed,
+    soil: Soil,
+    fertilizer: Fertilizer,
+    water: Water,
+    light: Light,
+    temperature: Temperature,
+    humidity: Humidity,
+    location: Location,
+}
+
+fn calculate(input: &InputDecoded) -> Vec<DecodedInfomationFase1> {
     input
-        .lines()
-        .map(|line| {
-            let (_, card) = decode_card(line).unwrap();
-            card
-        })
-        .collect()
-}
-
-fn calculate_card_puntuation_initial(card: &Card) -> u32 {
-    card.selected_numbers.iter().fold(0, |acc, number| {
-        if card.wining_numbers.contains(number) {
-            if acc == 0 {
-                acc + 1
-            } else {
-                acc << 1
+        .seeds
+        .clone()
+        .into_iter()
+        .map(|seed| {
+            let soil = SoilMapper::map(&input.soil_mappers, &seed);
+            let fertilizer = FertilizerMapper::map(&input.fertilizer_mappers, &soil);
+            let water = WaterMapper::map(&input.water_mappers, &fertilizer);
+            let light = LightMapper::map(&input.light_mappers, &water);
+            let temperature = TemperatureMapper::map(&input.temperature_mappers, &light);
+            let humidity = HumidityMapper::map(&input.humidity_mappers, &temperature);
+            let location = LocationMapper::map(&input.location_mappers, &humidity);
+            DecodedInfomationFase1 {
+                seed,
+                soil,
+                fertilizer,
+                water,
+                light,
+                temperature,
+                humidity,
+                location,
             }
-        } else {
-            acc
-        }
-    })
+        })
+        .collect::<Vec<_>>()
 }
 
-fn calculate_matches(card: &Card) -> u8 {
-    card.selected_numbers.iter().fold(0, |acc, number| {
-        if card.wining_numbers.contains(number) {
-            acc + 1
-        } else {
-            acc
-        }
-    })
+fn calculate_ver2(input: &InputDecoded) -> Vec<DecodedInfomationFase1> {
+    input
+        .seeds_pairs
+        .clone()
+        .into_par_iter()
+        .map(|(start, range)| {
+            let mut min = DecodedInfomationFase1 {
+                seed: Seed(0),
+                soil: Soil(0),
+                fertilizer: Fertilizer(0),
+                water: Water(0),
+                light: Light(0),
+                temperature: Temperature(0),
+                humidity: Humidity(0),
+                location: Location(u64::MAX),
+            };
+            for seed in start.0..start.0 + range.0 {
+                let soil = SoilMapper::map(&input.soil_mappers, &Seed(seed));
+                let fertilizer = FertilizerMapper::map(&input.fertilizer_mappers, &soil);
+                let water = WaterMapper::map(&input.water_mappers, &fertilizer);
+                let light = LightMapper::map(&input.light_mappers, &water);
+                let temperature = TemperatureMapper::map(&input.temperature_mappers, &light);
+                let humidity = HumidityMapper::map(&input.humidity_mappers, &temperature);
+                let location = LocationMapper::map(&input.location_mappers, &humidity);
+                if location < min.location {
+                    min = DecodedInfomationFase1 {
+                        seed: Seed(seed),
+                        soil,
+                        fertilizer,
+                        water,
+                        light,
+                        temperature,
+                        humidity,
+                        location,
+                    };
+                }
+            }
+            min
+        })
+        .collect::<Vec<_>>()
 }
 
-fn calculate_additional_cards(cards: &Vec<Card>) -> Vec<Card> {
-    let mut cloned_cards = cards.clone();
-    for card in &cloned_cards.clone() {
-        add_matches_to_cards(card, &mut cloned_cards);
-    }
-    cloned_cards
-}
-
-fn add_matches_to_cards(card: &Card, cards: &mut [Card]) {
-    let number_of_matches = calculate_matches(card);
-    let curr_card = cards
-        .iter()
-        .find(|c| c.id == card.id)
-        .map(|c| c.amount)
-        .unwrap_or(1);
-    for i in 1_u8..=number_of_matches {
-        let new_id = card.id + i;
-        if let Some(matched_card) = cards.iter_mut().find(|c| c.id == new_id) {
-            matched_card.amount += curr_card;
-        }
-    }
+#[derive(Debug, Clone)]
+struct InputDecoded {
+    soil_mappers: Vec<SoilMapper>,
+    fertilizer_mappers: Vec<FertilizerMapper>,
+    water_mappers: Vec<WaterMapper>,
+    light_mappers: Vec<LightMapper>,
+    temperature_mappers: Vec<TemperatureMapper>,
+    humidity_mappers: Vec<HumidityMapper>,
+    location_mappers: Vec<LocationMapper>,
+    seeds: Vec<Seed>,
+    seeds_pairs: Vec<(Seed, Seed)>,
 }
 
 fn main() {
     let input = fs::read_to_string("input.txt").expect("Something went wrong reading the file");
-    let cards = decode_cards(&input);
-    let puntuation = cards
-        .iter()
-        .map(calculate_card_puntuation_initial)
-        .sum::<u32>();
-    println!("puntuation: {}", puntuation);
-    let new_cards = calculate_additional_cards(&cards);
-    println!("new cards: {:?}", new_cards);
-    let total_cards = new_cards.into_iter().fold(0, |acc, card| acc + card.amount);
-    println!("total cards: {}", total_cards);
+    let input = decode_input(&input);
+    let result = calculate(&input);
+    let min = result.iter().map(|a| a.location).min().unwrap();
+    println!("result: {:#?}", min);
+    let fase2 = calculate_ver2(&input);
+    let min = fase2.iter().map(|a| a.location).min().unwrap();
+    println!("result: {:#?}", min);
 }
 
 #[cfg(test)]
 mod tests {
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
 
     #[test]
-    fn test_extract_card_id() {
-        let test_input = "Card   1: 69 61 27 58 89 52 81 94 40 51 | 43 40 52 90 37 97 89 80 69 42 51 70 94 58 10 73 21 29 61 63 57 79 81 27 35";
-        let expected_output= Ok((" 69 61 27 58 89 52 81 94 40 51 | 43 40 52 90 37 97 89 80 69 42 51 70 94 58 10 73 21 29 61 63 57 79 81 27 35", 1));
-        assert_eq!(extract_card_id(test_input), expected_output);
-
-        let test_input = "Card 1: 41 48 83 86 17 | 83 86  6 31 17  9 48 53";
-        let expected_output = Ok((" 41 48 83 86 17 | 83 86  6 31 17  9 48 53", 1));
-        assert_eq!(extract_card_id(test_input), expected_output);
-
-        let test_input = "Card 208:  9 67 74 14 59 41 84 60 73 86 | 87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21";
-        let expected_output = Ok(("  9 67 74 14 59 41 84 60 73 86 | 87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21", 208));
-        assert_eq!(extract_card_id(test_input), expected_output);
-
-        let test_input = "Card 213: 79 84 12 86 58 10 11 24 32 26 | 52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95";
-        let expected_output = Ok((" 79 84 12 86 58 10 11 24 32 26 | 52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95", 213));
-        assert_eq!(extract_card_id(test_input), expected_output);
+    fn test_map() {
+        let maps: Vec<SoilMapper> = vec![SoilMapper::new(50, 98, 2), SoilMapper::new(52, 50, 48)];
+        assert_eq!(SoilMapper::map(&maps, &Seed(0)), Soil(0));
+        assert_eq!(SoilMapper::map(&maps, &Seed(49)), Soil(49));
+        assert_eq!(SoilMapper::map(&maps, &Seed(50)), Soil(52));
+        assert_eq!(SoilMapper::map(&maps, &Seed(51)), Soil(53));
+        assert_eq!(SoilMapper::map(&maps, &Seed(96)), Soil(98));
+        assert_eq!(SoilMapper::map(&maps, &Seed(97)), Soil(99));
+        assert_eq!(SoilMapper::map(&maps, &Seed(98)), Soil(50));
+        assert_eq!(SoilMapper::map(&maps, &Seed(99)), Soil(51));
+        assert_eq!(SoilMapper::map(&maps, &Seed(79)), Soil(81));
+        assert_eq!(SoilMapper::map(&maps, &Seed(14)), Soil(14));
+        assert_eq!(SoilMapper::map(&maps, &Seed(55)), Soil(57));
+        assert_eq!(SoilMapper::map(&maps, &Seed(13)), Soil(13));
     }
 
     #[test]
-    fn test_extract_wining_values() {
-        let test_input = " 41 48 83 86 17 | 83 86  6 31 17  9 48 53";
-        let expected_output = Ok((" 83 86  6 31 17  9 48 53", "41 48 83 86 17"));
-        assert_eq!(extract_wining_values(test_input), expected_output);
+    fn test_parse_seed() {
+        let input = r#"seeds: 79 14 55 13
 
-        let test_input = "  9 67 74 14 59 41 84 60 73 86 | 87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21";
-        let expected_output = Ok((
-            " 87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21",
-            "9 67 74 14 59 41 84 60 73 86",
-        ));
-        assert_eq!(extract_wining_values(test_input), expected_output);
-
-        let test_input = " 79 84 12 86 58 10 11 24 32 26 | 52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95";
-        let expected_output = Ok((
-            " 52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95",
-            "79 84 12 86 58 10 11 24 32 26",
-        ));
-        assert_eq!(extract_wining_values(test_input), expected_output);
+seed-to-soil map:
+50 98 2
+52 50 48"#;
+        let (rest, seeds) = parse_seed(input).unwrap();
+        assert_eq!(seeds, vec![Seed(79), Seed(14), Seed(55), Seed(13)]);
+        assert_eq!(rest, "\n\nseed-to-soil map:\n50 98 2\n52 50 48");
     }
 
     #[test]
-    fn test_extract_selected_values() {
-        let test_input = " 83 86  6 31 17  9 48 53";
-        let expected_output = Ok(("", "83 86  6 31 17  9 48 53"));
-        assert_eq!(extract_selected_values(test_input), expected_output);
-
-        let test_input =
-            " 87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21";
-        let expected_output = Ok((
-            "",
-            "87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21",
-        ));
-        assert_eq!(extract_selected_values(test_input), expected_output);
-
-        let test_input =
-            " 52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95";
-        let expected_output = Ok((
-            "",
-            "52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95",
-        ));
-        assert_eq!(extract_selected_values(test_input), expected_output);
-    }
-
-    #[test]
-    fn test_decode_list_numbers() {
-        let test_input = "41 48 83 86 17";
-        let expected_output = Ok(("", vec![41, 48, 83, 86, 17]));
-        assert_eq!(decode_list_numbers(test_input), expected_output);
-
-        let test_input = "83 86  6 31 17  9 48 53";
-        let expected_output = Ok(("", vec![83, 86, 6, 31, 17, 9, 48, 53]));
-        assert_eq!(decode_list_numbers(test_input), expected_output);
-
-        let test_input = "9 67 74 14 59 41 84 60 73 86";
-        let expected_output = Ok(("", vec![9, 67, 74, 14, 59, 41, 84, 60, 73, 86]));
-        assert_eq!(decode_list_numbers(test_input), expected_output);
-
-        let test_input = "79 84 12 86 58 10 11 24 32 26";
-        let expected_output = Ok(("", vec![79, 84, 12, 86, 58, 10, 11, 24, 32, 26]));
-        assert_eq!(decode_list_numbers(test_input), expected_output);
-
-        let test_input = "83 86  6 31 17  9 48 53";
-        let expected_output = Ok(("", vec![83, 86, 6, 31, 17, 9, 48, 53]));
-        assert_eq!(decode_list_numbers(test_input), expected_output);
-
-        let test_input =
-            "87 16 27 86 50  7 30 77 64 76 73 71 99 92 23 82  2  5 55 57 40 47 45 72 21";
-        let expected_output = Ok((
-            "",
-            vec![
-                87, 16, 27, 86, 50, 7, 30, 77, 64, 76, 73, 71, 99, 92, 23, 82, 2, 5, 55, 57, 40,
-                47, 45, 72, 21,
-            ],
-        ));
-        assert_eq!(decode_list_numbers(test_input), expected_output);
-
-        let test_input =
-            "52 94 65 29 89  7 76 80 31 21 78 37 66 69 13 41 93 73 96 16 92 44 62  3 95";
-        let expected_output = Ok((
-            "",
-            vec![
-                52, 94, 65, 29, 89, 7, 76, 80, 31, 21, 78, 37, 66, 69, 13, 41, 93, 73, 96, 16, 92,
-                44, 62, 3, 95,
-            ],
-        ));
-        assert_eq!(decode_list_numbers(test_input), expected_output);
-    }
-    #[test]
-    fn test_decode_cards() {
-        let test_input = "\
-            Card 1: 41 48 83 86 17 | 83 86  6 31 17  9 48 53\n\
-            Card 2: 13 32 20 16 61 | 61 30 68 82 17 32 24 19\n\
-            Card 3:  1 21 53 59 44 | 69 82 63 72 16 21 14  1";
-
-        let expected_output = vec![
-            Card {
-                id: 1,
-                amount: 1,
-                wining_numbers: vec![41, 48, 83, 86, 17],
-                selected_numbers: vec![83, 86, 6, 31, 17, 9, 48, 53],
-            },
-            Card {
-                id: 2,
-                amount: 1,
-                wining_numbers: vec![13, 32, 20, 16, 61],
-                selected_numbers: vec![61, 30, 68, 82, 17, 32, 24, 19],
-            },
-            Card {
-                id: 3,
-                amount: 1,
-                wining_numbers: vec![1, 21, 53, 59, 44],
-                selected_numbers: vec![69, 82, 63, 72, 16, 21, 14, 1],
-            },
-        ];
-
-        assert_eq!(decode_cards(test_input), expected_output);
-    }
-
-    #[test]
-    fn test_calculate_card_puntuation() {
-        // Card 1: 41 48 83 86 17 | 83 86  6 31 17  9 48 53
-        let card = Card {
-            id: 1,
-            amount: 1,
-            wining_numbers: vec![41, 48, 83, 86, 17],
-            selected_numbers: vec![83, 86, 6, 31, 17, 9, 48, 53],
-        };
-        assert_eq!(calculate_card_puntuation_initial(&card), 8);
-        // Card 2: 13 32 20 16 61 | 61 30 68 82 17 32 24 19
-        let card = Card {
-            id: 2,
-            amount: 1,
-            wining_numbers: vec![13, 32, 20, 16, 61],
-            selected_numbers: vec![61, 30, 68, 82, 17, 32, 24, 19],
-        };
-        assert_eq!(calculate_card_puntuation_initial(&card), 2);
-        // Card 3:  1 21 53 59 44 | 69 82 63 72 16 21 14  1
-        let card = Card {
-            id: 3,
-            amount: 1,
-            wining_numbers: vec![1, 21, 53, 59, 44],
-            selected_numbers: vec![69, 82, 63, 72, 16, 21, 14, 1],
-        };
-        assert_eq!(calculate_card_puntuation_initial(&card), 2);
-        // Card 4: 41 92 73 84 69 | 59 84 76 51 58  5 54 83
-        let card = Card {
-            id: 4,
-            amount: 1,
-            wining_numbers: vec![41, 92, 73, 84, 69],
-            selected_numbers: vec![59, 84, 76, 51, 58, 5, 54, 83],
-        };
-        assert_eq!(calculate_card_puntuation_initial(&card), 1);
-        //Card 5: 87 83 26 28 32 | 88 30 70 12 93 22 82 36
-        let card = Card {
-            id: 5,
-            amount: 1,
-            wining_numbers: vec![87, 83, 26, 28, 32],
-            selected_numbers: vec![88, 30, 70, 12, 93, 22, 82, 36],
-        };
-        assert_eq!(calculate_card_puntuation_initial(&card), 0);
-        // Card 6: 31 18 13 56 72 | 74 77 10 23 35 67 36 11
-        let card = Card {
-            id: 6,
-            amount: 1,
-            wining_numbers: vec![31, 18, 13, 56, 72],
-            selected_numbers: vec![74, 77, 10, 23, 35, 67, 36, 11],
-        };
-        assert_eq!(calculate_card_puntuation_initial(&card), 0);
-    }
-
-    #[test]
-    fn test_calculate_matches() {
-        // Card 1: 41 48 83 86 17 | 83 86  6 31 17  9 48 53
-        let card = Card {
-            id: 1,
-            amount: 1,
-            wining_numbers: vec![41, 48, 83, 86, 17],
-            selected_numbers: vec![83, 86, 6, 31, 17, 9, 48, 53],
-        };
-        assert_eq!(calculate_matches(&card), 4);
-        // Card 2: 13 32 20 16 61 | 61 30 68 82 17 32 24 19
-        let card = Card {
-            id: 2,
-            amount: 1,
-            wining_numbers: vec![13, 32, 20, 16, 61],
-            selected_numbers: vec![61, 30, 68, 82, 17, 32, 24, 19],
-        };
-        assert_eq!(calculate_matches(&card), 2);
-        // Card 3:  1 21 53 59 44 | 69 82 63 72 16 21 14  1
-        let card = Card {
-            id: 3,
-            amount: 1,
-            wining_numbers: vec![1, 21, 53, 59, 44],
-            selected_numbers: vec![69, 82, 63, 72, 16, 21, 14, 1],
-        };
-        assert_eq!(calculate_matches(&card), 2);
-        // Card 4: 41 92 73 84 69 | 59 84 76 51 58  5 54 83
-        let card = Card {
-            id: 4,
-            amount: 1,
-            wining_numbers: vec![41, 92, 73, 84, 69],
-            selected_numbers: vec![59, 84, 76, 51, 58, 5, 54, 83],
-        };
-        assert_eq!(calculate_matches(&card), 1);
-        //Card 5: 87 83 26 28 32 | 88 30 70 12 93 22 82 36
-        let card = Card {
-            id: 5,
-            amount: 1,
-            wining_numbers: vec![87, 83, 26, 28, 32],
-            selected_numbers: vec![88, 30, 70, 12, 93, 22, 82, 36],
-        };
-        assert_eq!(calculate_matches(&card), 0);
-        // Card 6: 31 18 13 56 72 | 74 77 10 23 35 67 36 11
-        let card = Card {
-            id: 6,
-            amount: 1,
-            wining_numbers: vec![31, 18, 13, 56, 72],
-            selected_numbers: vec![74, 77, 10, 23, 35, 67, 36, 11],
-        };
-        assert_eq!(calculate_matches(&card), 0);
+    fn test_parse_maps() {
+        let input = "50 98 2\n52 50 48";
+        assert_eq!(
+            parse_maps::<SoilMapper>(input).unwrap(),
+            (
+                "",
+                vec![SoilMapper::new(50, 98, 2), SoilMapper::new(52, 50, 48)]
+            )
+        );
     }
 }
