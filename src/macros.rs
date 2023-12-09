@@ -9,52 +9,42 @@ macro_rules! impl_nu_type {
                 Self(value)
             }
         }
-    };
-}
 
-#[macro_export]
-macro_rules! impl_mappeable {
-    ( $s:ident, $d:ident ) => {
-        impl Mappable for $s {
-            type Source = $s;
-            type Destination = $d;
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! generate_mapper {
-    ($name:ident, $destination:ident, $source:ident) => {
-        #[derive(PartialEq, Ord, PartialOrd, Eq, Copy, Clone, Debug)]
-        struct $name {
-            destination_range_start: u64,
-            source_range_start: u64,
-            range_length: u64,
+        impl Display for $x {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.into_inner())
+            }
         }
 
-        impl $crate::traits::Mapper for $name {
-            type Source = $source;
-            type Destination = $destination;
-            fn destination_range_start(&self) -> u64 {
-                self.destination_range_start
-            }
-            fn source_range_start(&self) -> u64 {
-                self.source_range_start
-            }
-            fn range_length(&self) -> u64 {
-                self.range_length
-            }
+        impl std::ops::Add<$x> for $x {
+            type Output = $x;
 
-            fn new(
-                destination_range_start: u64,
-                source_range_start: u64,
-                range_length: u64,
-            ) -> Self {
-                Self {
-                    destination_range_start,
-                    source_range_start,
-                    range_length,
-                }
+            fn add(self, rhs: $x) -> Self::Output {
+                $x::new(self.into_inner() + rhs.into_inner())
+            }
+        }
+
+        impl std::ops::Sub<$x> for $x {
+            type Output = $x;
+
+            fn sub(self, rhs: $x) -> Self::Output {
+                $x::new(self.into_inner() - rhs.into_inner())
+            }
+        }
+
+        impl std::ops::Sub<$x> for &$x {
+            type Output = $x;
+
+            fn sub(self, rhs: $x) -> Self::Output {
+                $x::new(self.into_inner() - rhs.into_inner())
+            }
+        }
+
+        impl std::ops::Sub<&$x> for $x {
+            type Output = $x;
+
+            fn sub(self, rhs: &$x) -> Self::Output {
+                $x::new(self.into_inner() - rhs.into_inner())
             }
         }
     };
