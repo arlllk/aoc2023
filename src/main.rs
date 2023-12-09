@@ -42,18 +42,6 @@ enum Hands {
     FiveOfAKind,
 }
 
-fn upgrade_hand(hand: Hands) -> Hands {
-    match hand {
-        Hands::HighCard => Hands::OnePair,
-        Hands::OnePair => Hands::ThreeOfAKind,
-        Hands::TwoPair => Hands::FullHouse,
-        Hands::ThreeOfAKind => Hands::FourOfAKind,
-        Hands::FullHouse => Hands::FourOfAKind,
-        Hands::FourOfAKind => Hands::FiveOfAKind,
-        Hands::FiveOfAKind => Hands::FiveOfAKind,
-    }
-}
-
 fn check_if_upgrade(groups: Vec<&[Cards]>) -> Hands {
     let mut groups = groups.clone();
     // sort new_gruop by len desc
