@@ -23,9 +23,9 @@ struct Rank {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 enum Cards {
+    J,
     N(u8),
     T,
-    J,
     Q,
     K,
     A,
@@ -40,6 +40,124 @@ enum Hands {
     FullHouse,
     FourOfAKind,
     FiveOfAKind,
+}
+
+fn upgrade_hand(hand: Hands) -> Hands {
+    match hand {
+        Hands::HighCard => Hands::OnePair,
+        Hands::OnePair => Hands::ThreeOfAKind,
+        Hands::TwoPair => Hands::FullHouse,
+        Hands::ThreeOfAKind => Hands::FourOfAKind,
+        Hands::FullHouse => Hands::FourOfAKind,
+        Hands::FourOfAKind => Hands::FiveOfAKind,
+        Hands::FiveOfAKind => Hands::FiveOfAKind,
+    }
+}
+
+fn check_if_upgrade(groups: Vec<&[Cards]>) -> Hands {
+    let mut groups = groups.clone();
+    // sort new_gruop by len desc
+    groups.sort_by_key(|b| std::cmp::Reverse(b.len()));
+    match groups.len() {
+        1 => Hands::FiveOfAKind,
+        2 => {
+            let first = groups[0];
+            let second = groups[1];
+            match (first.len(), second.len()) {
+                (4, 1) => {
+                    if first.contains(&Cards::J) || second.contains(&Cards::J) {
+                        Hands::FiveOfAKind
+                    } else {
+                        Hands::FourOfAKind
+                    }
+                }
+                (3, 2) => {
+                    if first.contains(&Cards::J) || second.contains(&Cards::J) {
+                        Hands::FiveOfAKind
+                    } else {
+                        Hands::FullHouse
+                    }
+                }
+                (_, _) => panic!("Invalid hand {:?}", groups),
+            }
+        }
+        3 => {
+            let first = groups[0];
+            let second = groups[1];
+            let third = groups[2];
+            match (first.len(), second.len(), third.len()) {
+                (3, 1, 1) => {
+                    if first.contains(&Cards::J)
+                        || second.contains(&Cards::J)
+                        || third.contains(&Cards::J)
+                    {
+                        Hands::FourOfAKind
+                    } else {
+                        Hands::ThreeOfAKind
+                    }
+                }
+                (2, 2, 1) => {
+                    if first.contains(&Cards::J) || second.contains(&Cards::J) {
+                        Hands::FourOfAKind
+                    } else if third.contains(&Cards::J) {
+                        Hands::FullHouse
+                    } else {
+                        Hands::TwoPair
+                    }
+                }
+                (_, _, _) => panic!("Invalid hand {:?}", groups),
+            }
+        }
+        4 => {
+            let first = groups[0];
+            let second = groups[1];
+            let third = groups[2];
+            let fourth = groups[3];
+            match (first.len(), second.len(), third.len(), fourth.len()) {
+                (2, 1, 1, 1) => {
+                    if first.contains(&Cards::J)
+                        || second.contains(&Cards::J)
+                        || third.contains(&Cards::J)
+                        || fourth.contains(&Cards::J)
+                    {
+                        Hands::ThreeOfAKind
+                    } else {
+                        Hands::OnePair
+                    }
+                }
+                (_, _, _, _) => panic!("Invalid hand {:?}", groups),
+            }
+        }
+        5 => {
+            let first = groups[0];
+            let second = groups[1];
+            let third = groups[2];
+            let fourth = groups[3];
+            let fifth = groups[4];
+            match (
+                first.len(),
+                second.len(),
+                third.len(),
+                fourth.len(),
+                fifth.len(),
+            ) {
+                (1, 1, 1, 1, 1) => {
+                    if first.contains(&Cards::J)
+                        || second.contains(&Cards::J)
+                        || third.contains(&Cards::J)
+                        || fourth.contains(&Cards::J)
+                        || fifth.contains(&Cards::J)
+                    {
+                        Hands::OnePair
+                    } else {
+                        Hands::HighCard
+                    }
+                }
+                (_, _, _, _, _) => panic!("Invalid hand {:?}", groups),
+            }
+        }
+        _ => panic!("Invalid hand {:?}", groups),
+    }
 }
 
 fn parse_cards(input: &str) -> Vec<Cards> {
@@ -102,56 +220,7 @@ fn calculate_play(cards: Vec<Cards>, bet: u64) -> Play {
     let mut ord_cards = cards.clone();
     ord_cards.sort();
     let grouped = ord_cards.group_by(|a, b| a == b).collect::<Vec<_>>();
-    let hand = match grouped.len() {
-        1 => Hands::FiveOfAKind,
-        2 => {
-            let first = grouped[0];
-            let second = grouped[1];
-            match (first.len(), second.len()) {
-                (4, 1) | (1, 4) => Hands::FourOfAKind,
-                (3, 2) | (2, 3) => Hands::FullHouse,
-                (_, _) => panic!("Invalid hand {:?}", cards),
-            }
-        }
-        3 => {
-            let first = grouped[0];
-            let second = grouped[1];
-            let third = grouped[2];
-            match (first.len(), second.len(), third.len()) {
-                (3, 1, 1) | (1, 3, 1) | (1, 1, 3) => Hands::ThreeOfAKind,
-                (2, 2, 1) | (2, 1, 2) | (1, 2, 2) => Hands::TwoPair,
-                (_, _, _) => panic!("Invalid hand {:?}", cards),
-            }
-        }
-        4 => {
-            let first = grouped[0];
-            let second = grouped[1];
-            let third = grouped[2];
-            let fourth = grouped[3];
-            match (first.len(), second.len(), third.len(), fourth.len()) {
-                (2, 1, 1, 1) | (1, 2, 1, 1) | (1, 1, 2, 1) | (1, 1, 1, 2) => Hands::OnePair,
-                (_, _, _, _) => panic!("Invalid hand {:?}", cards),
-            }
-        }
-        5 => {
-            let first = grouped[0];
-            let second = grouped[1];
-            let third = grouped[2];
-            let fourth = grouped[3];
-            let fifth = grouped[4];
-            match (
-                first.len(),
-                second.len(),
-                third.len(),
-                fourth.len(),
-                fifth.len(),
-            ) {
-                (1, 1, 1, 1, 1) => Hands::HighCard,
-                (_, _, _, _, _) => panic!("Invalid hand {:?}", cards),
-            }
-        }
-        _ => panic!("Invalid hand {:?}", cards),
-    };
+    let hand = check_if_upgrade(grouped);
     Play { cards, bet, hand }
 }
 
