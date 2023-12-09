@@ -62,12 +62,23 @@ fn parse_distance(input: &str) -> IResult<&str, Vec<Distance>> {
     )(input)
 }
 
-fn parse_input(input: &str) -> IResult<&str, Vec<(Time, Distance)>> {
+fn join_values<T: NuType + Copy>(values: &[T]) -> u64 {
+    values
+        .iter()
+        .map(|v| v.into_inner().to_string())
+        .collect::<Vec<_>>()
+        .join("")
+        .parse::<u64>()
+        .unwrap()
+}
+
+fn parse_input(input: &str) -> IResult<&str, (Time, Distance)> {
     let (input, times) = parse_time(input)?;
     let (input, _) = line_ending(input)?;
     let (input, distances) = parse_distance(input)?;
-    let res = times.into_iter().zip(distances).collect::<Vec<_>>();
-    Ok((input, res))
+    let time_value = Time::new(join_values(&times));
+    let distance_value = Distance::new(join_values(&distances));
+    Ok((input, (time_value, distance_value)))
 }
 
 fn find_distance_archieved(total_time: &Time, time_to_press: Time) -> Distance {
@@ -96,18 +107,10 @@ fn find_times_to_press(total_time: &Time, distance_to_beat: &Distance) -> Vec<Ti
 
 fn main() {
     let input = fs::read_to_string("input.txt").expect("Something went wrong reading the file");
-    let (_, pairs) = parse_input(&input).unwrap();
-    let results = pairs
-        .iter()
-        .map(|(t, d)| (t, d, find_times_to_press(t, d)))
-        .collect::<Vec<_>>();
-    for (t, d, times) in results.iter() {
-        println!("Time: {}, Distance: {}, Times: {:?}", t, d, times);
-    }
-    let count = results
-        .iter()
-        .map(|(_, _, times)| times.len())
-        .product::<usize>();
+    let (_, (t, d)) = parse_input(&input).unwrap();
+    let (t, d, times) = (t, d, find_times_to_press(&t, &d));
+    //println!("Time: {}, Distance: {}, Times: {:?}", t, d, times);
+    let count = times.len();
     println!("Total: {}", count);
 }
 
