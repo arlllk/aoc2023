@@ -1,117 +1,197 @@
-mod macros;
-mod traits;
+#![feature(slice_group_by)]
 
-use crate::traits::NuType;
-use nom::bytes::complete::{tag, tag_no_case, take_until, take_while};
+use nom::bytes::complete::{tag, take_while};
 use nom::character::complete::line_ending;
 use nom::combinator::{map, map_res, opt};
 use nom::multi::{many0, many1};
-use nom::sequence::{preceded, terminated};
+use nom::sequence::terminated;
 use nom::IResult;
-use rayon::prelude::*;
-use std::fmt::Display;
 use std::fs;
-use std::slice::Iter;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
-struct Time(u64);
-impl_nu_type!(Time);
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
-struct Distance(u64);
-impl_nu_type!(Distance);
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
-struct Speed(u64);
-impl_nu_type!(Speed);
-
-impl std::ops::Mul<Speed> for Time {
-    type Output = Distance;
-
-    fn mul(self, rhs: Speed) -> Self::Output {
-        Distance::new(self.into_inner() * rhs.into_inner())
-    }
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Play {
+    hand: Hands,
+    cards: Vec<Cards>,
+    bet: u64,
 }
 
-fn parse_list_numbers(input: &str) -> IResult<&str, u64> {
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Rank {
+    rank: u32,
+    play: Play,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+enum Cards {
+    N(u8),
+    T,
+    J,
+    Q,
+    K,
+    A,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Hands {
+    HighCard,
+    OnePair,
+    TwoPair,
+    ThreeOfAKind,
+    FullHouse,
+    FourOfAKind,
+    FiveOfAKind,
+}
+
+fn parse_cards(input: &str) -> Vec<Cards> {
+    input
+        .chars()
+        .map(|c| match c {
+            'A' => Cards::A,
+            'K' => Cards::K,
+            'Q' => Cards::Q,
+            'J' => Cards::J,
+            'T' => Cards::T,
+            '2'..='9' => Cards::N(c.to_digit(10).unwrap() as u8),
+            _ => panic!("Invalid card"),
+        })
+        .collect::<Vec<_>>()
+}
+
+fn parse_cards_part(input: &str) -> IResult<&str, Vec<Cards>> {
     terminated(
-        map_res(take_while(|c: char| c.is_ascii_digit()), |s: &str| {
-            s.parse::<u64>()
-        }),
+        map(
+            take_while(|c: char| {
+                c == 'A'
+                    || c == 'K'
+                    || c == 'Q'
+                    || c == 'J'
+                    || c == 'T'
+                    || c == '2'
+                    || c == '3'
+                    || c == '4'
+                    || c == '5'
+                    || c == '6'
+                    || c == '7'
+                    || c == '8'
+                    || c == '9'
+            }),
+            |s: &str| parse_cards(s),
+        ),
         many0(tag(" ")),
     )(input)
 }
 
-fn parse_time(input: &str) -> IResult<&str, Vec<Time>> {
-    map(
-        preceded(
-            preceded(tag_no_case("time:"), many0(tag(" "))),
-            many1(parse_list_numbers),
-        ),
-        |s| s.iter().map(|s| Time::new(*s)).collect::<Vec<_>>(),
-    )(input)
+fn parse_bet(input: &str) -> IResult<&str, u64> {
+    map_res(take_while(|c: char| c.is_ascii_digit()), |s: &str| {
+        s.parse::<u64>()
+    })(input)
 }
 
-fn parse_distance(input: &str) -> IResult<&str, Vec<Distance>> {
-    map(
-        preceded(
-            preceded(tag_no_case("distance:"), many0(tag(" "))),
-            many1(parse_list_numbers),
-        ),
-        |s| s.iter().map(|s| Distance::new(*s)).collect::<Vec<_>>(),
-    )(input)
+fn parse_line(input: &str) -> IResult<&str, (Vec<Cards>, u64)> {
+    let (input, cards) = parse_cards_part(input)?;
+    let (input, bet) = parse_bet(input)?;
+    let (input, _) = opt(line_ending)(input)?;
+    Ok((input, (cards, bet)))
 }
 
-fn join_values<T: NuType + Copy>(values: &[T]) -> u64 {
-    values
-        .iter()
-        .map(|v| v.into_inner().to_string())
-        .collect::<Vec<_>>()
-        .join("")
-        .parse::<u64>()
-        .unwrap()
+fn parse_file(input: &str) -> IResult<&str, Vec<(Vec<Cards>, u64)>> {
+    many1(parse_line)(input)
 }
 
-fn parse_input(input: &str) -> IResult<&str, (Time, Distance)> {
-    let (input, times) = parse_time(input)?;
-    let (input, _) = line_ending(input)?;
-    let (input, distances) = parse_distance(input)?;
-    let time_value = Time::new(join_values(&times));
-    let distance_value = Distance::new(join_values(&distances));
-    Ok((input, (time_value, distance_value)))
-}
-
-fn find_distance_archieved(total_time: &Time, time_to_press: Time) -> Distance {
-    let remaining_time = total_time - time_to_press;
-    let speed = Speed::new(time_to_press.into_inner());
-    let distance_archived = remaining_time * speed;
-    distance_archived
-}
-
-fn find_times_to_press(total_time: &Time, distance_to_beat: &Distance) -> Vec<Time> {
-    let mut over = false;
-    let mut valid_times = vec![];
-    for i in 0..total_time.into_inner() {
-        let distance_archived = find_distance_archieved(total_time, Time::new(i));
-        if distance_archived > *distance_to_beat {
-            valid_times.push(Time::new(i));
-            if !over {
-                over = true;
+fn calculate_play(cards: Vec<Cards>, bet: u64) -> Play {
+    let mut ord_cards = cards.clone();
+    ord_cards.sort();
+    let grouped = ord_cards.group_by(|a, b| a == b).collect::<Vec<_>>();
+    let hand = match grouped.len() {
+        1 => Hands::FiveOfAKind,
+        2 => {
+            let first = grouped[0];
+            let second = grouped[1];
+            match (first.len(), second.len()) {
+                (4, 1) | (1, 4) => Hands::FourOfAKind,
+                (3, 2) | (2, 3) => Hands::FullHouse,
+                (_, _) => panic!("Invalid hand {:?}", cards),
             }
-        } else if over {
-            break;
         }
-    }
-    valid_times
+        3 => {
+            let first = grouped[0];
+            let second = grouped[1];
+            let third = grouped[2];
+            match (first.len(), second.len(), third.len()) {
+                (3, 1, 1) | (1, 3, 1) | (1, 1, 3) => Hands::ThreeOfAKind,
+                (2, 2, 1) | (2, 1, 2) | (1, 2, 2) => Hands::TwoPair,
+                (_, _, _) => panic!("Invalid hand {:?}", cards),
+            }
+        }
+        4 => {
+            let first = grouped[0];
+            let second = grouped[1];
+            let third = grouped[2];
+            let fourth = grouped[3];
+            match (first.len(), second.len(), third.len(), fourth.len()) {
+                (2, 1, 1, 1) | (1, 2, 1, 1) | (1, 1, 2, 1) | (1, 1, 1, 2) => Hands::OnePair,
+                (_, _, _, _) => panic!("Invalid hand {:?}", cards),
+            }
+        }
+        5 => {
+            let first = grouped[0];
+            let second = grouped[1];
+            let third = grouped[2];
+            let fourth = grouped[3];
+            let fifth = grouped[4];
+            match (
+                first.len(),
+                second.len(),
+                third.len(),
+                fourth.len(),
+                fifth.len(),
+            ) {
+                (1, 1, 1, 1, 1) => Hands::HighCard,
+                (_, _, _, _, _) => panic!("Invalid hand {:?}", cards),
+            }
+        }
+        _ => panic!("Invalid hand {:?}", cards),
+    };
+    Play { cards, bet, hand }
+}
+
+fn asing_rank(plays: Vec<Play>) -> Vec<Rank> {
+    let mut rank = 1;
+    plays
+        .into_iter()
+        .map(|play| {
+            println!("{} {:?}", rank, play);
+            let ranked = Rank { rank, play };
+            rank += 1;
+            ranked
+        })
+        .collect::<Vec<_>>()
+}
+
+fn calculate_earning(rankeds: Vec<Rank>) -> u64 {
+    rankeds
+        .iter()
+        .map(|rank| rank.play.bet * rank.rank as u64)
+        .sum()
 }
 
 fn main() {
     let input = fs::read_to_string("input.txt").expect("Something went wrong reading the file");
-    let (_, (t, d)) = parse_input(&input).unwrap();
-    let (t, d, times) = (t, d, find_times_to_press(&t, &d));
-    //println!("Time: {}, Distance: {}, Times: {:?}", t, d, times);
-    let count = times.len();
-    println!("Total: {}", count);
+    let (_, plays) = parse_file(&input).unwrap();
+    plays.iter().for_each(|(cards, bet)| {
+        println!("{:?} {}", cards, bet);
+    });
+    let mut plays = plays
+        .into_iter()
+        .map(|(cards, bet)| calculate_play(cards, bet))
+        .collect::<Vec<_>>();
+    plays.sort();
+    let rankeds = asing_rank(plays);
+    rankeds.iter().for_each(|rank| {
+        println!("{:?}", rank);
+    });
+    let earning = calculate_earning(rankeds);
+    println!("{}", earning);
 }
 
 #[cfg(test)]
@@ -120,5 +200,49 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_map() {}
+    fn test_parse_cards() {
+        let input = "32T3K";
+        let expected = vec![Cards::N(3), Cards::N(2), Cards::T, Cards::N(3), Cards::K];
+        let actual = parse_cards(input);
+        assert_eq!(expected, actual);
+
+        let input = "6A4K37KK54Q7J45TTT745Q845K6568668";
+        let expected = vec![
+            Cards::N(6),
+            Cards::A,
+            Cards::N(4),
+            Cards::K,
+            Cards::N(3),
+            Cards::N(7),
+            Cards::K,
+            Cards::K,
+            Cards::N(5),
+            Cards::N(4),
+            Cards::Q,
+            Cards::N(7),
+            Cards::J,
+            Cards::N(4),
+            Cards::N(5),
+            Cards::T,
+            Cards::T,
+            Cards::T,
+            Cards::N(7),
+            Cards::N(4),
+            Cards::N(5),
+            Cards::Q,
+            Cards::N(8),
+            Cards::N(4),
+            Cards::N(5),
+            Cards::K,
+            Cards::N(6),
+            Cards::N(5),
+            Cards::N(6),
+            Cards::N(8),
+            Cards::N(6),
+            Cards::N(6),
+            Cards::N(8),
+        ];
+        let actual = parse_cards(input);
+        assert_eq!(expected, actual);
+    }
 }
