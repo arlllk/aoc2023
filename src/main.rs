@@ -6,9 +6,9 @@ use nom::combinator::{map, opt};
 use nom::multi::{many0, many1};
 use nom::sequence::{delimited, preceded, terminated};
 use nom::{IResult, Parser};
+use rayon::prelude::*;
+use std::cmp::{max, min};
 use std::fs;
-use std::rc::Rc;
-
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 enum Instruction {
     Left,
@@ -56,29 +56,30 @@ impl<'a> ProtoNode<'a> {
             })
     }
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Node {
-    name: &'static str,
-    left: Rc<Node>,
-    rigth: Rc<Node>,
+fn gcd(a: u64, b: u64) -> u64 {
+    // The numbers, and also the last bytes
+    match ((a, b), (a & 1, b & 1)) {
+        // If is equal, is the number
+        ((x, y), _) if x == y => y,
+        // If one is zero, is the other
+        ((0, x), _) | ((x, 0), _) => x,
+        // If one is even, divide by two (bitshift) the even number
+        ((x, y), (0, 1)) | ((y, x), (1, 0)) => gcd(x >> 1, y),
+        // Is both are even, divide by two (bitshift), and multiply by two the result (bitshift)
+        ((x, y), (0, 0)) => gcd(x >> 1, y >> 1) << 1,
+        // If both are odd
+        ((x, y), (1, 1)) => {
+            // We get the biggest number and the smallest
+            let (x, y) = (min(x, y), max(x, y));
+            // We substract the smallest to the biggest, and divide by two (bitshift) and call with the smallest
+            gcd((y - x) >> 1, x)
+        }
+        _ => unreachable!(),
+    }
 }
 
-impl Node {
-    #[inline]
-    fn new(name: &'static str, left: Rc<Node>, rigth: Rc<Node>) -> Node {
-        Node { name, left, rigth }
-    }
-
-    #[inline]
-    fn go_left(&self) -> Rc<Node> {
-        self.left.clone()
-    }
-
-    #[inline]
-    fn go_rigth(&self) -> Rc<Node> {
-        self.rigth.clone()
-    }
+fn lcm(a: u64, b: u64) -> u64 {
+    a * b / gcd(a, b)
 }
 
 fn escape(instruction: &[Instruction], nodes: &[ProtoNode]) {
@@ -101,12 +102,43 @@ fn escape(instruction: &[Instruction], nodes: &[ProtoNode]) {
     }
 }
 
+fn calculate_scape_values<'a>(
+    intructions: &[Instruction],
+    nodes: &'a [ProtoNode<'_>],
+    start_node: &'a ProtoNode<'_>,
+) -> u64 {
+    let mut steps = 0_u64;
+    let mut current = start_node;
+    loop {
+        for i in intructions {
+            current = current.follow(nodes, *i);
+            steps += 1;
+            if current.name.ends_with('Z') {
+                //println!("Escaped in {} steps", steps);
+                return steps;
+            }
+        }
+    }
+}
+
+fn simul_scape(instruction: &[Instruction], nodes: &[ProtoNode]) {
+    let firsts: Vec<_> = nodes.iter().filter(|n| n.name.ends_with('A')).collect();
+    let currents: Vec<_> = firsts;
+    let scape_values = currents
+        .into_par_iter()
+        .map(|c| calculate_scape_values(instruction, nodes, &c))
+        .collect::<Vec<_>>();
+    let acc = scape_values.iter().fold(1, |acc, val| lcm(acc, *val));
+    println!("LCM: {}", acc);
+}
+
 fn main() {
     let input = fs::read_to_string("input.txt").expect("Something went wrong reading the file");
     let (_, (instructions, nodes)) = parse_file(&input).unwrap();
     println!("Instructions: {:?}", instructions);
     println!("Nodes: {:?}", nodes);
-    escape(&instructions, &nodes);
+    //escape(&instructions, &nodes);
+    simul_scape(&instructions, &nodes);
 }
 
 fn parse_file(input: &str) -> IResult<&str, (Vec<Instruction>, Vec<ProtoNode>)> {
@@ -146,7 +178,7 @@ fn parse_node(input: &str) -> IResult<&str, ProtoNode> {
 }
 
 fn parse_name(input: &str) -> IResult<&str, &str> {
-    take_while(|c: char| c.is_alphabetic())(input)
+    take_while(|c: char| c.is_alphanumeric())(input)
 }
 
 #[cfg(test)]
