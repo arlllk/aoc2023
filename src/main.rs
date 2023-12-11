@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::fs;
 
-static INCREMENT_VALUE: usize = 2;
+static INCREMENT_VALUE: usize = 1000000;
 
 struct Emptiness {
     lines: Vec<usize>,
