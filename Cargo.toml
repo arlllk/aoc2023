@@ -8,3 +8,56 @@ edition = "2021"
 [dependencies]
 nom = "7.1.3"
 rayon = "1.8.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+style = { level = "deny", priority = -1 }
+complexity = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+clone_on_ref_ptr = "deny"
+create_dir = "deny"
+decimal_literal_representation = "deny"
+default_numeric_fallback = "deny"
+filetype_is_file = "deny"
+float_cmp_const = "deny"
+fn_to_numeric_cast_any = "deny"
+format_push_string = "deny"
+get_unwrap = "deny"
+if_then_some_else_none = "deny"
+impl_trait_in_params = "deny"
+integer_division = "deny"
+let_underscore_must_use = "deny"
+lossy_float_literal = "deny"
+map_err_ignore = "deny"
+mem_forget = "deny"
+multiple_inherent_impl = "deny"
+mutex_atomic = "deny"
+needless_raw_strings = "deny"
+panic = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+rc_buffer = "deny"
+rc_mutex = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+semicolon_inside_block = "deny"
+str_to_string = "deny"
+string_lit_chars_any = "deny"
+string_to_string = "deny"
+suspicious_xor_used_as_pow = "deny"
+tests_outside_test_module = "deny"
+try_err = "deny"
+unneeded_field_pattern = "deny"
+unseparated_literal_suffix = "deny"
+verbose_file_reads = "deny"
+unwrap_used = "deny"
+cargo_common_metadata = "allow"
+multiple_crate_versions = "allow"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
