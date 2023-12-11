@@ -1,9 +1,4 @@
-use nom::bytes::complete::{tag, take_while};
-use nom::character::complete::line_ending;
-use nom::combinator::{map_res, opt};
-use nom::multi::{many0, many1};
-use nom::sequence::delimited;
-use nom::IResult;
+use std::collections::VecDeque;
 use std::fmt::{Display, Formatter};
 use std::fs;
 
@@ -52,6 +47,17 @@ impl PointType {
             Self::SouthEast => 'F',
             Self::Ground => '.',
             Self::Start => 'S',
+        }
+    }
+
+    fn is_mirror(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Horizontal, Self::Horizontal) => true,
+            (Self::Vertical, Self::Vertical) => true,
+            (Self::NorthEast, Self::NorthWest) => true,
+            (Self::SouthEast, Self::SouthWest) => true,
+            (Self::Start, _) => true,
+            (_, _) => false,
         }
     }
 }
@@ -116,6 +122,30 @@ impl Position {
         }
         let y = self.coords.y;
         Some(matrix[y as usize][x as usize].clone())
+    }
+
+    pub fn is_inside_of(&self, matrix: &[&[Self]], walls: &[Self]) -> bool {
+        let x = self.coords.x;
+        let y = self.coords.y;
+        if walls.iter().any(|item| item.coords == self.coords) {
+            return false;
+        }
+        let previous = &matrix[y as usize][0..x as usize];
+        let count_of_walls = walls
+            .iter()
+            .filter(|a| a.coords.y == y && a.coords.x < x)
+            // Y que no apunte al norte
+            .filter(|a| {
+                a.point_type != PointType::Horizontal
+                    && a.point_type != PointType::SouthWest
+                    && a.point_type != PointType::SouthEast
+            })
+            .count();
+        if count_of_walls % 2 == 1 {
+            println!("Count of walls for {}: {}", self.coords, count_of_walls);
+            return true;
+        }
+        return false;
     }
 }
 
@@ -208,7 +238,9 @@ fn main() {
     let matrix = parse_file(&input);
     let matrix = matrix.iter().map(|a| a.as_slice()).collect::<Vec<_>>();
     let initial_position = find_initial_position(&matrix);
+    let mut walls = vec![];
     let mut current_position = initial_position;
+    walls.push(current_position.current_position);
     println!("Initial position: {:?}", current_position);
     let mut i = 0;
     loop {
@@ -216,12 +248,19 @@ fn main() {
         println!("Current position: {:?}", next_position);
         current_position = next_position;
         i += 1;
+        walls.push(current_position.current_position);
         if current_position.current_position.point_type == PointType::Start {
             break;
         }
     }
     println!("Steps: {}", i);
     println!("farthest: {}", i / 2);
+    let points = matrix.iter().flat_map(|a| a.iter()).collect::<Vec<_>>();
+    let val: Vec<_> = points
+        .iter()
+        .filter(|a| a.is_inside_of(&matrix, &walls))
+        .collect();
+    println!("Points inside: {}", val.len());
 }
 
 fn parse_file(input: &str) -> Vec<Vec<Position>> {
